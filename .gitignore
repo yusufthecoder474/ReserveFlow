@@ -1,0 +1,16 @@
+node_modules/
+**/node_modules/
+dist/
+coverage/
+.vite/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+.idea/
+.vscode/
+playwright-report/
+test-results/
+experiments/results/*
+!experiments/results/.gitkeep

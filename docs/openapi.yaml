@@ -1,0 +1,307 @@
+openapi: 3.1.2
+info:
+  title: ReserveFlow API
+  version: 0.2.0
+  description: Synthetic business purchase-request and budget-reservation API. No real payments are processed.
+servers:
+  - url: /api
+security:
+  - sessionCookie: []
+paths:
+  /health/live:
+    get:
+      security: []
+      summary: Liveness check
+      responses:
+        '200': { description: Process is alive }
+  /health/ready:
+    get:
+      security: []
+      summary: Database readiness check
+      responses:
+        '200': { description: PostgreSQL is ready }
+        '503': { description: A dependency is unavailable }
+  /auth/login:
+    post:
+      security: []
+      summary: Create a session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 1, maxLength: 256 }
+                organizationSlug: { type: string }
+      responses:
+        '200':
+          description: Authenticated; response also sets an HttpOnly session cookie.
+          headers:
+            Set-Cookie: { schema: { type: string } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { description: Login rate limit reached }
+  /auth/me:
+    get:
+      summary: Current user and organization
+      responses:
+        '200': { description: Current session and CSRF token }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/logout:
+    post:
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204': { description: Session revoked }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /dashboard/summary:
+    get:
+      summary: Organization/department-scoped summary
+      responses:
+        '200': { description: Budget and request summary }
+  /departments:
+    get:
+      summary: Visible departments
+      responses:
+        '200': { description: Departments visible to the current user }
+  /budgets:
+    get:
+      summary: List visible budgets
+      parameters:
+        - in: query
+          name: period
+          schema: { type: string, pattern: '^20[0-9]{2}-(0[1-9]|1[0-2])$' }
+      responses:
+        '200': { description: Budget records }
+    post:
+      summary: Create a department budget (finance admin)
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [departmentId, periodKey, limitAmount]
+              properties:
+                departmentId: { type: string, format: uuid }
+                periodKey: { type: string, pattern: '^20[0-9]{2}-(0[1-9]|1[0-2])$' }
+                limitAmount: { $ref: '#/components/schemas/MoneyInput' }
+      responses:
+        '201': { description: Budget created }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Budget already exists for department and period }
+  /budgets/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UuidPath'
+    get:
+      summary: Read one visible budget
+      responses:
+        '200': { description: Budget detail }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      summary: Update a budget limit (finance admin)
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [limitAmount]
+              properties:
+                limitAmount: { $ref: '#/components/schemas/MoneyInput' }
+      responses:
+        '200': { description: Budget updated }
+        '409': { description: Limit below reserved amount }
+  /requests:
+    get:
+      summary: List visible requests
+      parameters:
+        - in: query
+          name: status
+          schema: { type: string, enum: [draft, submitted, approved, rejected, cancelled] }
+        - in: query
+          name: q
+          schema: { type: string, maxLength: 100 }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0, maximum: 10000, default: 0 }
+      responses:
+        '200': { description: Visible request page }
+    post:
+      summary: Create a draft request
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [budgetId, title, amount]
+              properties:
+                budgetId: { type: string, format: uuid }
+                title: { type: string, minLength: 3, maxLength: 140 }
+                description: { type: string, maxLength: 2000 }
+                amount: { $ref: '#/components/schemas/MoneyInput' }
+      responses:
+        '201': { description: Draft created }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /requests/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UuidPath'
+    get:
+      summary: Read a visible request
+      responses:
+        '200': { description: Request detail }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      summary: Edit an owned draft
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              additionalProperties: false
+              properties:
+                title: { type: string, minLength: 3, maxLength: 140 }
+                description: { type: string, maxLength: 2000 }
+                amount: { $ref: '#/components/schemas/MoneyInput' }
+      responses:
+        '200': { description: Draft updated }
+        '409': { description: Request is not an editable draft }
+  /requests/{id}/submit:
+    post:
+      summary: Submit an owned draft
+      parameters:
+        - $ref: '#/components/parameters/UuidPath'
+        - $ref: '#/components/parameters/CsrfToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200': { description: Request submitted or original result replayed }
+        '409': { description: Invalid state or idempotency conflict }
+  /requests/{id}/approve:
+    post:
+      summary: Approve and reserve budget (department approver only)
+      parameters:
+        - $ref: '#/components/parameters/UuidPath'
+        - $ref: '#/components/parameters/CsrfToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200': { description: Request approved and reservation recorded atomically }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Insufficient budget, state conflict, or idempotency conflict }
+  /requests/{id}/reject:
+    post:
+      summary: Reject a submitted request (department approver only)
+      parameters:
+        - $ref: '#/components/parameters/UuidPath'
+        - $ref: '#/components/parameters/CsrfToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 1000 }
+      responses:
+        '200': { description: Request rejected and reason recorded }
+        '409': { description: State or idempotency conflict }
+  /requests/{id}/cancel:
+    post:
+      summary: Cancel an eligible request; releases an approved reservation atomically
+      parameters:
+        - $ref: '#/components/parameters/UuidPath'
+        - $ref: '#/components/parameters/CsrfToken'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200': { description: Request cancelled }
+        '409': { description: State or reservation conflict }
+  /requests/{id}/audit:
+    get:
+      summary: Read a visible request's activity timeline
+      parameters:
+        - $ref: '#/components/parameters/UuidPath'
+      responses:
+        '200': { description: Request audit events }
+  /audit:
+    get:
+      summary: List organization audit events (finance admin only)
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200': { description: Organization-scoped audit events }
+        '403': { $ref: '#/components/responses/Forbidden' }
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: rf_session
+  parameters:
+    UuidPath:
+      in: path
+      name: id
+      required: true
+      schema: { type: string, format: uuid }
+    CsrfToken:
+      in: header
+      name: X-CSRF-Token
+      required: true
+      schema: { type: string, minLength: 64, maxLength: 64 }
+    IdempotencyKey:
+      in: header
+      name: Idempotency-Key
+      required: true
+      schema: { type: string, minLength: 8, maxLength: 200 }
+  schemas:
+    MoneyInput:
+      type: string
+      pattern: '^(?:0|[1-9][0-9]{0,10})(?:\.[0-9]{1,2})?$'
+      examples: ['125.00', '0.50']
+      description: Decimal string; server converts directly to integer minor units.
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, requestId]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            requestId: { type: string }
+            details: {}
+  responses:
+    ValidationError:
+      description: Validation error
+    Unauthorized:
+      description: Authentication required or session expired
+    Forbidden:
+      description: Permission or CSRF check failed
+    NotFound:
+      description: Record not found or not visible to this actor

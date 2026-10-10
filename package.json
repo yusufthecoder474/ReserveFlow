@@ -1,0 +1,26 @@
+{
+  "name": "reserveflow",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev --workspace @reserveflow/api",
+    "dev:web": "npm run dev --workspace @reserveflow/web",
+    "build": "npm run build --workspace @reserveflow/api && npm run build --workspace @reserveflow/web",
+    "typecheck": "npm run typecheck --workspace @reserveflow/api && npm run typecheck --workspace @reserveflow/web",
+    "test": "npm run test --workspace @reserveflow/api",
+    "db:migrate": "npm run db:migrate --workspace @reserveflow/api",
+    "db:seed": "npm run db:seed --workspace @reserveflow/api",
+    "test:api": "npm run test --workspace @reserveflow/api",
+    "test:integration": "npm run test:integration --workspace @reserveflow/api",
+    "experiment:concurrency": "tsx experiments/run-concurrency.ts",
+    "test:e2e": "npm run test:e2e --workspace @reserveflow/web"
+  }
+}

@@ -1,0 +1,54 @@
+name: ReserveFlow CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: reserveflow
+          POSTGRES_PASSWORD: ci_only_password
+          POSTGRES_DB: reserveflow_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U reserveflow -d reserveflow_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      NODE_ENV: test
+      HOST: 127.0.0.1
+      PORT: 4000
+      LOG_LEVEL: warn
+      CORS_ORIGIN: http://127.0.0.1:5173
+      DATABASE_URL: postgresql://reserveflow:ci_only_password@127.0.0.1:5432/reserveflow_test
+      RESERVEFLOW_SEED_PASSWORD: ReserveFlowDemoOnly!2026
+      SESSION_COOKIE_SECURE: 'false'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Apply schema and seed local users
+        run: npm run db:migrate && npm run db:seed
+      - name: Static checks and build
+        run: npm run typecheck && npm run build
+      - name: Unit tests
+        run: npm test
+      - name: PostgreSQL integration test
+        run: RESERVEFLOW_RUN_DB_TESTS=1 npm run test:integration
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+      - name: End-to-end purchase workflow
+        run: npm run test:e2e
